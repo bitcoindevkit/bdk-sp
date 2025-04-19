@@ -1,9 +1,11 @@
 mod indexer;
 
-use std::env;
-use std::str::FromStr;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::{
+    cmp, env,
+    str::FromStr,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use anyhow::{self, bail, Context};
 use clap::{self, Args, Parser, Subcommand};
@@ -11,21 +13,25 @@ use miniscript::{
     descriptor::{DescriptorSecretKey, DescriptorType},
     Descriptor, DescriptorPublicKey, ToPublicKey,
 };
-use rand::RngCore;
+use rand::{rng, seq::SliceRandom, RngCore};
 use serde_json::json;
 
 use bdk_chain::{
     local_chain::{self, LocalChain},
-    tx_graph, BlockId, ChainOracle, ConfirmationBlockTime, Merge, TxGraph, TxPosInBlock,
+    tx_graph, BlockId, ChainOracle, ConfirmationBlockTime, FullTxOut, Merge, TxGraph, TxPosInBlock,
 };
+
 use bdk_file_store::Store;
+
+use bdk_coin_select::Candidate;
 
 use bdk_silentpayments::{
     bitcoin::{
+        address::NetworkUnchecked,
         bip32::{self, DerivationPath},
         constants,
         secp256k1::{Secp256k1, SecretKey},
-        Amount, Block, Network, OutPoint, Psbt, ScriptBuf, TxOut,
+        Address, Amount, Block, Network, OutPoint, Psbt, ScriptBuf, TxOut,
     },
     encoding::SilentPaymentCode,
     receive::{Scanner, SpOut},
@@ -195,7 +201,68 @@ pub enum Commands {
         #[clap(flatten)]
         rpc_args: RpcArgs,
     },
+    NewPsbt {
+        /// Amount to send in satoshis
+        value: u64,
+        /// Recipient address
+        address: Address<NetworkUnchecked>,
+        /// Set max absolute timelock (from consensus value)
+        #[clap(long, short)]
+        after: Option<u32>,
+        /// Set max relative timelock (from consensus value)
+        #[clap(long, short)]
+        older: Option<u32>,
+        /// Coin selection algorithm
+        #[clap(long, short, default_value = "bnb")]
+        coin_select: CoinSelectionAlgo,
+        /// Debug print the PSBT
+        #[clap(long, short)]
+        debug: bool,
+    },
     Balance,
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum CoinSelectionAlgo {
+    LargestFirst,
+    SmallestFirst,
+    OldestFirst,
+    NewestFirst,
+    #[default]
+    BranchAndBound,
+}
+
+impl FromStr for CoinSelectionAlgo {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use CoinSelectionAlgo::*;
+        Ok(match s {
+            "largest-first" => LargestFirst,
+            "smallest-first" => SmallestFirst,
+            "oldest-first" => OldestFirst,
+            "newest-first" => NewestFirst,
+            "bnb" => BranchAndBound,
+            unknown => bail!("unknown coin selection algorithm '{}'", unknown),
+        })
+    }
+}
+
+impl std::fmt::Display for CoinSelectionAlgo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use CoinSelectionAlgo::*;
+        write!(
+            f,
+            "{}",
+            match self {
+                LargestFirst => "largest-first",
+                SmallestFirst => "smallest-first",
+                OldestFirst => "oldest-first",
+                NewestFirst => "newest-first",
+                BranchAndBound => "bnb",
+            }
+        )
+    }
 }
 
 #[inline]
@@ -527,6 +594,82 @@ fn main() -> anyhow::Result<()> {
                 ],
             );
         }
+        Commands::NewPsbt {
+            value,
+            address,
+            after: _,
+            older: _,
+            coin_select,
+            debug: _,
+        } => {
+            let chain = &*chain.lock().unwrap();
+            let graph = &*graph.lock().unwrap();
+
+            let chain_tip = chain.get_chain_tip()?;
+            let address = address.require_network(sp_code.network)?;
+            let outpoints = indexes.spouts.into_iter().map(|(x, y)| (y, x));
+            #[allow(clippy::type_complexity)]
+            let mut utxos = graph
+                .try_filter_chain_unspents(chain, chain_tip, outpoints)?
+                .filter_map(
+                    |(spout, full_txo)| -> Option<
+                        Result<
+                            (SpOut, FullTxOut<ConfirmationBlockTime>),
+                            <bdk_chain::local_chain::LocalChain as bdk_chain::ChainOracle>::Error,
+                        >,
+                    > {
+                        if full_txo.is_mature(chain_tip.height) {
+                            Some(Ok((spout, full_txo)))
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .collect::<Result<Vec<(SpOut, FullTxOut<ConfirmationBlockTime>)>, _>>()?;
+
+            match coin_select {
+                CoinSelectionAlgo::LargestFirst => {
+                    utxos.sort_by_key(|(_, utxo)| cmp::Reverse(utxo.txout.value))
+                }
+                CoinSelectionAlgo::SmallestFirst => utxos.sort_by_key(|(_, utxo)| utxo.txout.value),
+                CoinSelectionAlgo::OldestFirst => {
+                    utxos.sort_by_key(|(_, utxo)| utxo.chain_position)
+                }
+                CoinSelectionAlgo::NewestFirst => {
+                    utxos.sort_by_key(|(_, utxo)| cmp::Reverse(utxo.chain_position))
+                }
+                CoinSelectionAlgo::BranchAndBound => utxos.shuffle(&mut rng()),
+            }
+
+            // build candidate set
+            let _candidates: Vec<Candidate> = utxos
+                .iter()
+                .map(|(_plan, utxo)| {
+                    Candidate::new(
+                        utxo.txout.value.to_sat(),
+                        // key spend path:
+                        // scriptSigLen(4) + stackLen(1) + stack[Sig]Len(1) + stack[Sig](65)
+                        4 + 1 + 1 + 65,
+                        true,
+                    )
+                })
+                .collect();
+
+            // create recipient output(s)
+            let mut _outputs = [TxOut {
+                value: Amount::from_sat(value),
+                script_pubkey: address.script_pubkey(),
+            }];
+
+            // TODO:
+            // [ ] Create change output with identifiable fingerprint
+            // [ ] Create SilentPaymentSender which doesn't depend of DerivationPaths to get a_sum
+
+            //let mut change_output = TxOut {
+            //value: Amount::ZERO,
+            //script_pubkey: change_script,
+            //};
+        } // sort utxos if cs-algo requires it
     };
 
     Ok(())
