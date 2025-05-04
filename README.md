@@ -8,10 +8,11 @@ tools in BDK.
 
 This is a second iteration of the work initiated in [rust-bip352].
 > [!TIP]
-> This is a partial mirror of the changes applied in
+> This is a continuation of the changes applied in
 > [bdk:feat/silent-payments-with-rust-silentpayments] branch, isolated here for
 > better discoverability.
-> If you want to make use of [`example-crates/`] is better to do it from that branch.
+> The [example-crates/justfile] has been refactored to work in isolation from
+> the bdk repository.
 
 The project started building on top of [rust-silentpayments], but later
 extracted the needed parts from it and started evolving by its own.
