@@ -311,7 +311,10 @@ stop:
     echo "Container is not running"
   else
     just cli stop
-    just podcmd "rm -rf /tmp/testenv"
+    if just podcmd '[ -d /tmp/testenv ]'; then
+      just podcmd rm -rf '.bdk_*'
+      just podcmd "rm -rf /tmp/testenv"
+    fi
     podman --connection regtest stop RegtestBitcoinEnv
   fi
 
