@@ -1,4 +1,4 @@
-use bdk_silentpayments::{
+use bdk_sp::{
     bitcoin::{
         absolute::LockTime,
         bip32,

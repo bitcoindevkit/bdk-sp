@@ -1,4 +1,4 @@
-# `bdk-silentpayments`
+# `bdk-sp`
 
 > [!WARNING]
 > Work in progress. Not recommended for use with bitcoin mainnet.
@@ -30,7 +30,7 @@ To get started see the `encoding::SilentPaymentCode`, `receive::Scanner` or
 you want to focus on.
 
 ```rust
-use bdk_silentpayments::{
+use bdk_sp::{
     bitcoin::{ ... },
     encoding::SilentPaymentCode,
     receive::Scanner,

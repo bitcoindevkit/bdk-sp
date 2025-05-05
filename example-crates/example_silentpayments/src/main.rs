@@ -25,7 +25,7 @@ use bdk_file_store::Store;
 
 use bdk_coin_select::Candidate;
 
-use bdk_silentpayments::{
+use bdk_sp::{
     bitcoin::{
         address::NetworkUnchecked,
         bip32::{self, DerivationPath},

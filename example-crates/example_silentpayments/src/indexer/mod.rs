@@ -3,7 +3,7 @@ use std::iter::Extend;
 
 use bdk_chain::{tx_graph, Merge, TxGraph};
 
-use bdk_silentpayments::{
+use bdk_sp::{
     bitcoin::{
         secp256k1::{PublicKey, Scalar, SecretKey},
         OutPoint, Transaction, TxOut, Txid,
