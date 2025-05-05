@@ -462,7 +462,7 @@ bdk_sp_new_example:
     SP_CODE_WITH_LABEL=$(cargo -q run --bin example_silentpayments code --label 32 --scan "$SCAN_DESCRIPTOR" | jq -r ".labelled_silent_payment_code")
     SP_CODE_WITHOUT_LABEL=$(cargo -q run --bin example_silentpayments code | jq -r ".silent_payment_code")
 
-    if just podcmd [ -f .bdk_example_electrum.db ]; then
+    if just podcmd '[ -f .bdk_example_electrum.db ]'; then
       just podcmd rm -rf .bdk_example_electrum.db;
     fi
 
@@ -506,7 +506,7 @@ bdk_sp_new_example:
 
   just stop
 
-  if just podcmd [ -f .bdk_example_electrum.db ]; then
+  if just podcmd '[ -f .bdk_example_electrum.db ]'; then
     just podcmd rm -rf .bdk_example_electrum.db;
   fi
 
