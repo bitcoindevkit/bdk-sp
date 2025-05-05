@@ -324,6 +324,7 @@ podshell:
 
 [group("Podman")]
 [doc("Execute command inside pod.")]
+[no-exit-message]
 podcmd *ARGS="":
   #!/usr/bin/env bash
   short_date=$(/bin/date +%m%d%y)
