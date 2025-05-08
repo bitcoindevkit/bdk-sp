@@ -6,6 +6,8 @@
 This is an experimental crate to research the implementation of silent payment
 tools in BDK.
 
+![execution flow enabled by this crate](../media/sp_flow.gif?raw=true)
+
 This is a second iteration of the work initiated in [rust-bip352].
 > [!TIP]
 > This is a continuation of the changes applied in
