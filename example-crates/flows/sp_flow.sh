@@ -13,10 +13,11 @@ ls justfile
 
 #$ expect .*
 #$ send # 3. Set up regtest environment\n
-#$ send # If you have never run this, this will:\n
+#$ send # If you have never run this, it will:\n
 #$ send # - allocate a virtual machine\n
-#$ send # - build regtest image into virtual machine container\n
-#$ send # - launch container inside virtual machine \n
+#$ send # - build image into virtual machine\n
+#$ send # - spin up container inside virtual machine \n
+#$ send # - launch bitcoind and electrum server in regtest\n
 just start "ephemeral"
 #$ expect \$
 #$ send # We set up the running mode as ephemeral, nothing you do in the environment will be persisted\n
@@ -35,7 +36,8 @@ export RPC_PASS=$(just cookie)
 just bdk example_electrum init
 #$ expect \$
 #$ send # Fund wallet with one confirmed coinbase Tx\n
-just mine 101 $(just bdk example_electrum address next | jq -r ".address") >/dev/null
+just mine 101 \
+  $(just bdk example_electrum address next | jq -r ".address") >/dev/null
 #$ expect \$
 #$ send # Perform initial scan\n
 just bdk example_electrum scan 2>/dev/null
@@ -59,12 +61,17 @@ export SPEND_DESCRIPTOR=$(echo $SP_KEYS | jq -r '.private_spend_descriptor')
 
 #$ expect \$
 #$ send # Use silent payment descriptors to create regtest silent payment wallet\n
-cargo -q run --bin example_silentpayments init --network regtest --scan "$SCAN_DESCRIPTOR" --spend "$SPEND_DESCRIPTOR"
+cargo -q run --bin example_silentpayments init \
+  --network regtest \
+  --scan "$SCAN_DESCRIPTOR" \
+  --spend "$SPEND_DESCRIPTOR"
 #$ expect \$
 
 #$ send # 6. Create silent payment tx sending to code without label\n
 #$ send # Get silent payment code without label from silent payment wallet\n
-SP_CODE_WITHOUT_LABEL=$(cargo -q run --bin example_silentpayments code | jq -r ".silent_payment_code")
+SP_CODE_WITHOUT_LABEL=$(\
+  cargo -q run --bin example_silentpayments code | jq -r ".silent_payment_code" \
+)
 #$ expect \$
 
 #$ send # We use the funding wallet itself because by default bdk init generates taproot descriptors\n
@@ -73,27 +80,40 @@ SAT_AMOUNT=10000
 #$ expect \$
 
 #$ send # Fund PSBT sending to fake P2TR address\n
-ORIGINAL_PSBT=$(just bdk example_electrum psbt new $SAT_AMOUNT $FAKE_ADDRESS | jq -r ".psbt")
+ORIGINAL_PSBT=$(\
+  just bdk example_electrum psbt new $SAT_AMOUNT $FAKE_ADDRESS | jq -r ".psbt" \
+)
 #$ expect \$
 
 #$ send # Replace fake P2TR address by P2TR output sending to silent payment code without label\n
-SP_PSBT=$(just bdk_sp to-silent-payment --psbt $ORIGINAL_PSBT --code $SP_CODE_WITHOUT_LABEL --amount $SAT_AMOUNT | jq -r ".psbt")
+SP_PSBT=$(\
+  just bdk_sp to-silent-payment \
+  --psbt $ORIGINAL_PSBT \
+  --code $SP_CODE_WITHOUT_LABEL \
+  --amount $SAT_AMOUNT | jq -r ".psbt" \
+)
 #$ expect \$
 
 #$ send # Sign, broadcast and mine silent payment to code without label\n
-SIGNED_SP_PSBT=$(just bdk example_electrum psbt sign --psbt $SP_PSBT | jq -r ".psbt")
-SP_TX=$(just bdk example_electrum psbt extract $SIGNED_SP_PSBT -b | jq -r ".broadcasted_tx")
+SIGNED_SP_PSBT=$(\
+  just bdk example_electrum psbt sign --psbt $SP_PSBT | jq -r ".psbt" \
+)
+SP_TX=$(\
+  just bdk example_electrum psbt extract $SIGNED_SP_PSBT -b | jq -r ".broadcasted_tx" \
+)
 just mine 1 >/dev/null
 #$ expect \$
 
 #$ send # Scan blockchain looking for payments to silent payment code without label\n
-cargo -q run --bin example_silentpayments scan --scan "$SCAN_DESCRIPTOR" --code "$SP_CODE_WITHOUT_LABEL"
+cargo -q run --bin example_silentpayments scan \
+  --scan "$SCAN_DESCRIPTOR" \
+  --code "$SP_CODE_WITHOUT_LABEL"
 #$ expect \$
 
 just bdk_sp balance
 #$ expect .*
 
-#$ send # Synchronize funding wallet to mark previous Tx inputs as spend\n
+#$ send # Synchronize funding wallet to mark previous Tx inputs as spent\n
 just bdk example_electrum sync 2>/dev/null
 #$ expect \$
 just bdk example_electrum balance
@@ -103,25 +123,43 @@ just bdk example_electrum balance
 
 #$ expect \$
 #$ send # Get silent payment code with label 32 from silent payment wallet\n
-SP_CODE_WITH_LABEL=$(cargo -q run --bin example_silentpayments code --label 32 --scan "$SCAN_DESCRIPTOR" | jq -r ".labelled_silent_payment_code")
+SP_CODE_WITH_LABEL=$(\
+  cargo -q run --bin example_silentpayments code \
+  --label 32 \
+  --scan "$SCAN_DESCRIPTOR" | jq -r ".labelled_silent_payment_code" \
+)
 #$ expect \$
 
 #$ send # Get fake PSBT again. Needed to renew inputs\n
-ORIGINAL_PSBT=$(just bdk example_electrum psbt new $SAT_AMOUNT $FAKE_ADDRESS | jq -r ".psbt")
+ORIGINAL_PSBT=$(\
+  just bdk example_electrum psbt new $SAT_AMOUNT $FAKE_ADDRESS | jq -r ".psbt" \
+)
 #$ expect \$
 
 #$ send # Replace fake P2TR address by P2TR output sending to silent payment code with label\n
-SP_PSBT=$(just bdk_sp to-silent-payment --psbt $ORIGINAL_PSBT --code $SP_CODE_WITH_LABEL --amount $SAT_AMOUNT | jq -r ".psbt")
+SP_PSBT=$(\
+  just bdk_sp to-silent-payment \
+  --psbt $ORIGINAL_PSBT \
+  --code $SP_CODE_WITH_LABEL \
+  --amount $SAT_AMOUNT | jq -r ".psbt" \
+)
 #$ expect \$
 
 #$ send # Sign, broadcast and mine silent payment to code with label\n
-SIGNED_SP_PSBT=$(just bdk example_electrum psbt sign --psbt $SP_PSBT | jq -r ".psbt")
-SP_TX=$(just bdk example_electrum psbt extract $SIGNED_SP_PSBT -b | jq -r ".broadcasted_tx")
+SIGNED_SP_PSBT=$(\
+  just bdk example_electrum psbt sign \
+  --psbt $SP_PSBT | jq -r ".psbt" \
+)
+SP_TX=$(\
+  just bdk example_electrum psbt extract $SIGNED_SP_PSBT -b | jq -r ".broadcasted_tx" \
+)
 just mine 1 >/dev/null
 #$ expect \$
 
 #$ send # Scan blockchain looking for payments to silent payment code with or without label\n
-cargo -q run --bin example_silentpayments scan --scan "$SCAN_DESCRIPTOR" --code "$SP_CODE_WITHOUT_LABEL"
+cargo -q run --bin example_silentpayments scan \
+  --scan "$SCAN_DESCRIPTOR" \
+  --code "$SP_CODE_WITHOUT_LABEL"
 #$ expect \$
 
 just bdk_sp balance
