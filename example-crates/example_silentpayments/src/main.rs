@@ -238,14 +238,7 @@ fn main() -> anyhow::Result<()> {
                 Some(_) if scan_descriptor.is_none() => bail!("unable to generate labelled silent payment code without spend private descriptor"),
                 Some(m) => {
                     let scan_sk = get_sk_from_sp_descriptor(scan_descriptor.unwrap())?;
-
-                    let label = SilentPaymentCode::get_label(scan_sk, m);
-                    let labelled_sp_code = sp_code.add_label(label)?;
-                    let neg_spend_pk = sp_code.spend.negate(&secp);
-                    #[allow(non_snake_case)]
-                    // label_G = B_m - B_spend
-                    let label_G = labelled_sp_code.spend.combine(&neg_spend_pk)?;
-                    indexes.label_to_tweak.insert(label_G, (label, m));
+                    let labelled_sp_code = indexes.add_label(sp_code, scan_sk, m)?;
                     {
                         let db = &mut *db.lock().unwrap();
                         db.append(&ChangeSet {

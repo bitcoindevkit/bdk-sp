@@ -3,6 +3,7 @@ use std::iter::Extend;
 
 use bdk_chain::{tx_graph, Merge, TxGraph};
 
+use bdk_sp::encoding::SilentPaymentCode;
 use bdk_sp::{
     bitcoin::{
         secp256k1::{PublicKey, Scalar, SecretKey},
@@ -12,7 +13,7 @@ use bdk_sp::{
 };
 
 use bdk_bitcoind_rpc::bitcoincore_rpc::{Client, RpcApi};
-use bitcoin::key::TweakedPublicKey;
+use bitcoin::key::{Secp256k1, TweakedPublicKey};
 use bitcoin::ScriptBuf;
 
 #[derive(Clone, Default, Debug)]
@@ -26,6 +27,32 @@ pub struct SpIndexes {
 }
 
 impl SpIndexes {
+    pub fn add_label(
+        &mut self,
+        sp_code: SilentPaymentCode,
+        scan_sk: SecretKey,
+        m: u32,
+    ) -> Result<SilentPaymentCode, SpReceiveError> {
+        let secp = Secp256k1::verification_only();
+        let label = SilentPaymentCode::get_label(scan_sk, m);
+        let labelled_sp_code = sp_code.add_label(label)?;
+        let neg_spend_pk = sp_code.spend.negate(&secp);
+        #[allow(non_snake_case)]
+        // label_G = B_m - B_spend
+        let label_G = labelled_sp_code.spend.combine(&neg_spend_pk)?;
+        self.label_to_tweak.insert(label_G, (label, m));
+        self.num_to_label.insert(m, label_G);
+        Ok(labelled_sp_code)
+    }
+
+    pub fn get_label(&self, m: u32) -> Option<Scalar> {
+        if let Some(label_pk) = self.num_to_label.get(&m) {
+            self.label_to_tweak.get(&label_pk).and_then(|x| Some(x.0))
+        } else {
+            None
+        }
+    }
+
     pub fn txouts_in_tx(&self, txid: Txid) -> impl DoubleEndedIterator<Item = &SpOut> {
         self.spouts
             .range(OutPoint::new(txid, u32::MIN)..=OutPoint::new(txid, u32::MAX))
