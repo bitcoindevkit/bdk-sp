@@ -495,11 +495,15 @@ fn main() -> anyhow::Result<()> {
             fn print_balances<'a>(
                 title_str: &'a str,
                 items: impl IntoIterator<Item = (&'a str, Amount)>,
-            ) {
-                println!("{}:", title_str);
+            ) -> anyhow::Result<()> {
+                let mut obj = serde_json::Map::new();
+                let mut sub_obj = serde_json::Map::new();
                 for (name, amount) in items.into_iter() {
-                    println!("    {:<10} {:>12} sats", name, amount.to_sat())
+                    sub_obj.insert(name.to_string(), json!(amount.to_sat()));
                 }
+                obj.insert(title_str.to_string(), json!(sub_obj));
+                println!("{}", serde_json::to_string_pretty(&obj)?);
+                Ok(())
             }
 
             let outpoints = indexes.spouts.into_iter().map(|(x, y)| (y, x));
@@ -516,7 +520,7 @@ fn main() -> anyhow::Result<()> {
                     ("spendable", balance.confirmed),
                     ("immature", balance.immature),
                 ],
-            );
+            )?;
             print_balances(
                 "unconfirmed",
                 [
@@ -524,7 +528,7 @@ fn main() -> anyhow::Result<()> {
                     ("trusted", balance.trusted_pending),
                     ("untrusted", balance.untrusted_pending),
                 ],
-            );
+            )?;
         }
     };
 
