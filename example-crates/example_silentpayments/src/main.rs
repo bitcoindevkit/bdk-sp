@@ -438,7 +438,7 @@ fn main() -> anyhow::Result<()> {
                         .into_iter()
                         .map(|(x, y)| (y, x));
                     let balance =
-                        { graph.balance(&*chain, synced_to.block_id(), outpoints, |_, _| false) };
+                        graph.balance(&*chain, synced_to.block_id(), outpoints, is_change);
                     println!(
                         "[{:>10}s] synced to {} @ {} | total: {}",
                         start.elapsed().as_secs_f32(),
@@ -469,7 +469,7 @@ fn main() -> anyhow::Result<()> {
                     .clone()
                     .into_iter()
                     .map(|(x, y)| (y, x));
-                let balance = { graph.balance(chain, synced_to.block_id(), outpoints, is_change) };
+                let balance = graph.balance(chain, synced_to.block_id(), outpoints, is_change);
                 println!(
                     "[{:>10}s] synced to {} @ {} | total: {}",
                     start.elapsed().as_secs_f32(),
