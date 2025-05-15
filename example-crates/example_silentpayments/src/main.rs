@@ -637,31 +637,9 @@ pub fn init_or_load(db_magic: &[u8], db_path: &str) -> anyhow::Result<Option<Ini
             let sp_code = if let (Some(scan_d), Some(spend_d)) =
                 (changeset.scan_descriptor, changeset.spend_descriptor)
             {
-                if !scan_d.has_wildcard() && !spend_d.has_wildcard() {
-                    let scan_def_d = scan_d.at_derivation_index(0)?;
-                    let spend_def_d = spend_d.at_derivation_index(0)?;
-                    match (scan_def_d, spend_def_d) {
-                        (Descriptor::Tr(scan_), Descriptor::Tr(spend_)) => {
-                            let scan = scan_.internal_key().to_public_key();
-                            let spend = spend_.internal_key().to_public_key();
-                            SilentPaymentCode {
-                                scan: bitcoin::secp256k1::PublicKey::from_slice(
-                                    &scan.to_bytes()[..],
-                                )?,
-                                spend: bitcoin::secp256k1::PublicKey::from_slice(
-                                    &spend.to_bytes()[..],
-                                )?,
-                                version: 0,
-                                network,
-                            }
-                        }
-                        _ => return Ok(None),
-                    }
-                } else {
-                    return Ok(None);
-                }
+                get_sp_code_from_descriptors(&scan_d, &spend_d, network)?
             } else {
-                return Ok(None);
+                bail!("Loaded db is missing scan or spend descriptors")
             };
 
             let chain = Mutex::new({
@@ -710,5 +688,31 @@ fn get_sk_from_sp_descriptor(desc_str: String) -> Result<SecretKey, anyhow::Erro
             Ok(derived_key.private_key)
         }
         _ => unimplemented!("multi xkey signer"),
+    }
+}
+
+fn get_sp_code_from_descriptors(
+    scan: &Descriptor<DescriptorPublicKey>,
+    spend: &Descriptor<DescriptorPublicKey>,
+    network: Network,
+) -> Result<SilentPaymentCode, anyhow::Error> {
+    if !scan.has_wildcard() && !spend.has_wildcard() {
+        let scan_def_d = scan.at_derivation_index(0)?;
+        let spend_def_d = spend.at_derivation_index(0)?;
+        match (scan_def_d, spend_def_d) {
+            (Descriptor::Tr(scan_), Descriptor::Tr(spend_)) => {
+                let scan = scan_.internal_key().to_public_key();
+                let spend = spend_.internal_key().to_public_key();
+                Ok(SilentPaymentCode {
+                    scan: bitcoin::secp256k1::PublicKey::from_slice(&scan.to_bytes()[..])?,
+                    spend: bitcoin::secp256k1::PublicKey::from_slice(&spend.to_bytes()[..])?,
+                    version: 0,
+                    network,
+                })
+            }
+            _ => bail!("Silent payment descriptors can only be Taproot."),
+        }
+    } else {
+        bail!("Silent payment descriptors should be definitive (non derivable).")
     }
 }
