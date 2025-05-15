@@ -606,6 +606,7 @@ pub fn init_or_load(db_magic: &[u8], db_path: &str) -> anyhow::Result<Option<Ini
             spend_descriptor,
         } => {
             let mut changeset = ChangeSet::default();
+            let mut indexes = SpIndexes::default();
 
             // parse descriptors
             let secp = Secp256k1::new();
@@ -614,6 +615,12 @@ pub fn init_or_load(db_magic: &[u8], db_path: &str) -> anyhow::Result<Option<Ini
             let (spend, _) =
                 Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, &spend_descriptor)?;
 
+            let sp_code = get_sp_code_from_descriptors(&scan, &spend, network)?;
+
+            let scan_sk = get_sk_from_sp_descriptor(scan_descriptor)?;
+            indexes.add_label(sp_code, scan_sk, CHANGE_LABEL)?;
+
+            changeset.indexes = indexes.into();
             changeset.scan_descriptor = Some(scan);
             changeset.spend_descriptor = Some(spend);
 
