@@ -1,5 +1,6 @@
 use crate::encoding::SilentPaymentCode;
 use crate::hashes::{InputsHash, SharedSecretHash};
+use crate::receive::SpOut;
 use bitcoin::TapTweakHash;
 use bitcoin::{
     bip32::{DerivationPath, Xpriv},
@@ -107,6 +108,32 @@ impl XprivSilentPaymentSender {
     }
 }
 
+pub struct SpSender {
+    spend_sk: SecretKey,
+}
+
+impl SpSender {
+    pub fn new(spend_sk: SecretKey) -> Self {
+        Self { spend_sk }
+    }
+
+    pub fn send_to(
+        &self,
+        inputs: &[SpOut],
+        outputs: &[SilentPaymentCode],
+    ) -> Result<Vec<ScriptBuf>, SpSendError> {
+        let mut inputs_sk = <Vec<(OutPoint, SecretKey)>>::new();
+        for spout in inputs {
+            let sp_data = (
+                spout.outpoint,
+                self.spend_sk.add_tweak(&Scalar::from(spout.tweak))?,
+            );
+            inputs_sk.push(sp_data);
+        }
+
+        send_to_sp(&inputs_sk, outputs)
+    }
+}
 
 pub fn send_to_sp(
     inputs: &[(OutPoint, SecretKey)],
