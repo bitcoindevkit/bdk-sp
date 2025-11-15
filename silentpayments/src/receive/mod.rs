@@ -213,6 +213,26 @@ pub fn get_silentpayment_script_pubkey(
     derivation_order: u32,
     maybe_label_point: Option<&PublicKey>,
 ) -> ScriptBuf {
+    let p_k = get_silentpayment_pubkey(
+        spend_pk,
+        ecdh_shared_secret,
+        derivation_order,
+        maybe_label_point,
+    );
+
+    let (x_only_key, _) = p_k.x_only_public_key();
+
+    let assumed_tweaked_pk = TweakedPublicKey::dangerous_assume_tweaked(x_only_key);
+
+    ScriptBuf::new_p2tr_tweaked(assumed_tweaked_pk)
+}
+
+pub fn get_silentpayment_pubkey(
+    spend_pk: &PublicKey,
+    ecdh_shared_secret: &PublicKey,
+    derivation_order: u32,
+    maybe_label_point: Option<&PublicKey>,
+) -> PublicKey {
     let secp = Secp256k1::new();
 
     let t_k = get_shared_secret(*ecdh_shared_secret, derivation_order);
@@ -231,11 +251,7 @@ pub fn get_silentpayment_script_pubkey(
         P_k
     };
 
-    let (x_only_key, _) = P_k.x_only_public_key();
-
-    let assumed_tweaked_pk = TweakedPublicKey::dangerous_assume_tweaked(x_only_key);
-
-    ScriptBuf::new_p2tr_tweaked(assumed_tweaked_pk)
+    P_k
 }
 
 pub fn compute_tweak_data(
