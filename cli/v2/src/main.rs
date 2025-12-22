@@ -10,7 +10,8 @@ use bdk_sp::{
         self,
         address::NetworkUnchecked,
         bip32,
-        consensus::Decodable,
+        consensus::{deserialize, Decodable},
+        hashes::Hash,
         hex::{DisplayHex, FromHex},
         key::Secp256k1,
         script::PushBytesBuf,
@@ -34,6 +35,7 @@ use bdk_sp_oracles::{
         TrustedPeer, UnboundedReceiver, Warning,
     },
     filters::kyoto::{FilterEvent, FilterSubscriber},
+    frigate::{FrigateClient, History, SubscribeRequest, UnsubscribeRequest, DUMMY_COINBASE},
     tweaks::blindbit::{BlindbitSubscriber, TweakEvent},
 };
 use bdk_sp_wallet::{
@@ -161,6 +163,16 @@ pub enum Commands {
         #[clap(long)]
         hash: Option<BlockHash>,
     },
+
+    ScanFrigate {
+        #[clap(flatten)]
+        rpc_args: RpcArgs,
+        #[clap(long)]
+        height: Option<u32>,
+        #[clap(long)]
+        hash: Option<BlockHash>,
+    },
+
     Create {
         /// Network
         #[clap(long, short, default_value = "signet")]
@@ -559,6 +571,167 @@ async fn main() -> anyhow::Result<()> {
                     tip.height(),
                     balance.total()
                 );
+            }
+        }
+        Commands::ScanFrigate {
+            rpc_args,
+            height,
+            hash,
+        } => {
+            // The implementation done here differs from what is mentioned in the section
+            // https://github.com/sparrowwallet/frigate/tree/master?tab=readme-ov-file#blockchainsilentpaymentssubscribe
+            // This implementation is doing a one time scanning only. So instead of calling
+            // `blockchain.scripthash.subscribe` on each script from the wallet, we just subscribe
+            // and read the scanning result from the stream. On each result received we update the
+            // wallet state and once scanning progress reaches 1.0 (100%) we stop.
+            let sync_point = if let (Some(height), Some(hash)) = (height, hash) {
+                HeaderCheckpoint::new(height, hash)
+            } else if wallet.birthday.height <= wallet.chain().tip().height() {
+                let height = wallet.chain().tip().height();
+                let hash = wallet.chain().tip().hash();
+                HeaderCheckpoint::new(height, hash)
+            } else {
+                let checkpoint = wallet
+                    .chain()
+                    .get(wallet.birthday.height)
+                    .expect("should be something");
+                let height = checkpoint.height();
+                let hash = checkpoint.hash();
+                HeaderCheckpoint::new(height, hash)
+            };
+
+            let mut client = FrigateClient::connect(&rpc_args.url)
+                .await
+                .unwrap()
+                .with_timeout(tokio::time::Duration::from_secs(60));
+
+            let labels = wallet
+                .indexer()
+                .index()
+                .num_to_label
+                .clone()
+                .into_keys()
+                .collect::<Vec<u32>>();
+            let labels = if !labels.is_empty() {
+                Some(labels)
+            } else {
+                None
+            };
+
+            let subscribe_params = SubscribeRequest {
+                scan_priv_key: *wallet.indexer().scan_sk(),
+                spend_pub_key: *wallet.indexer().spend_pk(),
+                start_height: Some(sync_point.height),
+                labels,
+            };
+
+            // Attempt to subscribe; any timeout will trigger unsubscribe automatically.
+            match client.subscribe_with_timeout(&subscribe_params).await {
+                Ok(Some((histories, progress))) => {
+                    tracing::info!(
+                        "Initial subscription result: {} histories, progress {}",
+                        histories.len(),
+                        progress
+                    );
+                }
+                Ok(None) => {
+                    tracing::info!("Subscription acknowledged, awaiting notifications");
+                }
+                Err(e) => {
+                    tracing::error!("Subscribe failed: {}", e);
+                    return Err(e.into());
+                }
+            }
+
+            tracing::info!("Starting frigate scanning loop...");
+            loop {
+                match client.read_from_stream(4096).await {
+                    Ok(subscribe_result) => {
+                        if subscribe_result["params"].is_object() {
+                            let histories: Vec<History> = serde_json::from_value(
+                                subscribe_result["params"]["history"].clone(),
+                            )?;
+                            let progress = subscribe_result["params"]["progress"]
+                                .as_f64()
+                                .unwrap_or(0.0) as f32;
+
+                            let mut secrets_by_height: HashMap<u32, HashMap<Txid, PublicKey>> =
+                                HashMap::new();
+
+                            tracing::debug!("Received history {:#?}", histories);
+
+                            histories.iter().for_each(|h| {
+                                secrets_by_height
+                                    .entry(h.height)
+                                    .and_modify(|v| {
+                                        v.insert(h.tx_hash, h.tweak_key);
+                                    })
+                                    .or_insert(HashMap::from([(h.tx_hash, h.tweak_key)]));
+                            });
+
+                            // Filter when the height is 0, because that would mean mempool transaction
+                            for secret in secrets_by_height.into_iter().filter(|v| v.0 > 0) {
+                                // Since frigate doesn't provide a blockchain.getblock we will mimick that here
+                                // By constructing a block from the block header and the list of transactions
+                                // received from the scan request
+                                let mut raw_blk = client.get_block_header(secret.0).await.unwrap();
+                                raw_blk.push_str("00");
+
+                                // Push dummy coinbase
+                                let coinbase: Transaction =
+                                    deserialize(&Vec::<u8>::from_hex(DUMMY_COINBASE).unwrap())
+                                        .unwrap();
+                                let mut block: Block =
+                                    deserialize(&Vec::<u8>::from_hex(&raw_blk).unwrap()).unwrap();
+
+                                let mut blockhash = BlockHash::all_zeros();
+
+                                let mut txs: Vec<Transaction> = vec![coinbase];
+                                for key in secret.1.keys() {
+                                    let tx_result =
+                                        client.get_transaction(key.to_string()).await.unwrap();
+                                    let tx: Transaction =
+                                        deserialize(&Vec::<u8>::from_hex(&tx_result.1).unwrap())
+                                            .unwrap();
+                                    txs.push(tx);
+
+                                    blockhash = BlockHash::from_str(&tx_result.0).unwrap();
+                                }
+
+                                block.txdata = txs;
+                                tracing::debug!("Final block {:?}", block);
+                                wallet.apply_block_relevant(&block, secret.1, secret.0);
+
+                                tracing::debug!("Checkpoint hash {blockhash:?}");
+                                let checkpoint = wallet.chain().tip().insert(BlockId {
+                                    height: secret.0,
+                                    hash: blockhash,
+                                });
+                                wallet.update_chain(checkpoint);
+                            }
+
+                            tracing::info!("Progress {progress}");
+                            // Check the progress
+                            if progress >= 1.0 {
+                                tracing::info!("Scanning completed");
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) if e.to_string().contains("timed out") => {
+                        tracing::warn!("read_from_stream timeout, exiting scan");
+                        let unsubscribe_request = UnsubscribeRequest {
+                            scan_privkey: *wallet.indexer().scan_sk(),
+                            spend_pubkey: *wallet.indexer().spend_pk(),
+                        };
+                        let _ = client.unsubscribe(&unsubscribe_request).await;
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::error!("read_from_stream error: {}", e);
+                        return Err(e.into());
+                    }
+                }
             }
         }
         Commands::Balance => {

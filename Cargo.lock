@@ -328,6 +328,7 @@ dependencies = [
  "bitcoin",
  "futures",
  "indexer",
+ "jsonrpc",
  "rayon",
  "redb",
  "reqwest",

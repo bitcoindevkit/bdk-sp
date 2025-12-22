@@ -121,7 +121,7 @@ build TAG="1.0.0" VERSION="29.0" RELEASE="29.0": machine
     RUN mkdir -p /build/frigate
     RUN mkdir -p /frigate
     WORKDIR /frigate
-    RUN git clone --recursive --branch 1.1.0 --depth 1 https://github.com/sparrowwallet/frigate.git .
+    RUN git clone --recursive --branch 1.3.2 --depth 1 https://github.com/sparrowwallet/frigate.git .
     RUN ./gradlew jpackage
     RUN cp -r ./build/jpackage/frigate /build/frigate
     RUN rm -rf /frigate
