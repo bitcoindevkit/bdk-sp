@@ -33,7 +33,7 @@ pub struct ReceivingData {
 #[derive(Debug, Deserialize)]
 pub struct SendingDataGiven {
     pub vin: Vec<SendingVinData>,
-    #[serde(deserialize_with = "deserialize_silentpayment_code")]
+    #[serde(deserialize_with = "deserialize_silentpayment_code::<_, RecipientMap>")]
     pub recipients: Vec<SilentPaymentCode>,
 }
 
@@ -141,8 +141,9 @@ pub struct ScriptPubKey {
 
 #[derive(Debug, Deserialize)]
 pub struct ReceivingDataExpected {
-    #[serde(deserialize_with = "deserialize_silentpayment_code")]
+    #[serde(deserialize_with = "deserialize_silentpayment_code::<_, String>")]
     pub addresses: Vec<SilentPaymentCode>,
+    #[serde(default)]
     pub outputs: Vec<OutputWithSignature>,
 }
 
@@ -153,20 +154,28 @@ pub struct OutputWithSignature {
     pub signature: String,
 }
 
-fn deserialize_silentpayment_code<'de, D>(
+#[derive(Debug, Deserialize)]
+struct RecipientMap {
+    address: String,
+}
+
+impl AsRef<str> for RecipientMap {
+    fn as_ref(&self) -> &str {
+        &self.address
+    }
+}
+
+fn deserialize_silentpayment_code<'de, D, T>(
     deserializer: D,
 ) -> Result<Vec<SilentPaymentCode>, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + AsRef<str>,
 {
-    let v: Vec<String> = <Vec<String>>::deserialize(deserializer)?;
-    let mut silentpayment_codes = <Vec<SilentPaymentCode>>::new();
-    for s in v {
-        let code = SilentPaymentCode::try_from(s.as_str()).map_err(D::Error::custom)?;
-        silentpayment_codes.push(code);
-    }
-
-    Ok(silentpayment_codes)
+    Vec::<T>::deserialize(deserializer)?
+        .iter()
+        .map(|item| SilentPaymentCode::try_from(item.as_ref()).map_err(D::Error::custom))
+        .collect()
 }
 
 fn deserialize_signature<'de, D>(deserializer: D) -> Result<ScriptBuf, D::Error>
