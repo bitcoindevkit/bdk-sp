@@ -267,3 +267,14 @@ fn no_valid_inputs_sender_generates_no_outputs() {
 fn input_keys_sum_up_to_zero_point_at_infinity_sending_fails_receiver_skips_tx() {
     check_cases(25);
 }
+
+#[test]
+fn input_keys_intermediate_sum_is_zero_but_final_sum_is_non_zero() {
+    check_cases(26);
+}
+
+#[test]
+#[ignore = "limit k-max not implemented"]
+fn maximum_per_group_recipient_limit_k_max_is_exceeded() {
+    check_cases(27);
+}
