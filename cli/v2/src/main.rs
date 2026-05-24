@@ -10,7 +10,7 @@ use bdk_sp::{
         self,
         address::NetworkUnchecked,
         bip32,
-        consensus::Decodable,
+        consensus::{self, deserialize, Decodable},
         hex::{DisplayHex, FromHex},
         key::Secp256k1,
         script::PushBytesBuf,
@@ -34,6 +34,7 @@ use bdk_sp_oracles::{
         TrustedPeer, UnboundedReceiver, Warning,
     },
     filters::kyoto::{FilterEvent, FilterSubscriber},
+    frigate::{FrigateClient, StreamExt, SubscribeRequest, UnsubscribeRequest, DUMMY_COINBASE},
     tweaks::blindbit::{BlindbitSubscriber, TweakEvent},
 };
 use bdk_sp_wallet::{
@@ -45,6 +46,7 @@ use bdk_sp_wallet::{
     ChangeSet, SpWallet,
 };
 use clap::{self, ArgGroup, Args, Parser, Subcommand};
+use electrum_streaming_client::{notification::Notification, Event};
 use indexer::bdk_chain::BlockId;
 use rand::RngCore;
 use serde_json::json;
@@ -156,6 +158,14 @@ pub enum Commands {
         tweak_server_url: String,
         #[clap(long)]
         extra_peer: Option<String>,
+        #[clap(long)]
+        height: Option<u32>,
+        #[clap(long)]
+        hash: Option<BlockHash>,
+    },
+    ScanFrigate {
+        #[clap(flatten)]
+        rpc_args: RpcArgs,
         #[clap(long)]
         height: Option<u32>,
         #[clap(long)]
@@ -568,6 +578,132 @@ async fn main() -> anyhow::Result<()> {
                     balance.total()
                 );
             }
+        }
+        Commands::ScanFrigate {
+            rpc_args,
+            height,
+            hash,
+        } => {
+            // The implementation done here differs from what is mentioned in the section
+            // https://github.com/sparrowwallet/frigate/tree/master?tab=readme-ov-file#blockchainsilentpaymentssubscribe
+            // This implementation is doing a one time scanning only. So instead of calling
+            // `blockchain.scripthash.subscribe` on each script from the wallet, we just subscribe
+            // and read the scanning result from the stream. On each result received we update the
+            // wallet state and once scanning progress reaches 1.0 (100%) we stop.
+            let sync_point = if let (Some(height), Some(hash)) = (height, hash) {
+                HeaderCheckpoint::new(height, hash)
+            } else if wallet.birthday.height <= wallet.chain().tip().height() {
+                let height = wallet.chain().tip().height();
+                let hash = wallet.chain().tip().hash();
+                HeaderCheckpoint::new(height, hash)
+            } else {
+                let checkpoint = wallet
+                    .chain()
+                    .get(wallet.birthday.height)
+                    .expect("should be something");
+                let height = checkpoint.height();
+                let hash = checkpoint.hash();
+                HeaderCheckpoint::new(height, hash)
+            };
+
+            let mut client = FrigateClient::connect(&rpc_args.url)
+                .await
+                .unwrap()
+                .with_timeout(tokio::time::Duration::from_secs(60));
+
+            let labels = wallet
+                .indexer()
+                .index()
+                .num_to_label
+                .clone()
+                .into_keys()
+                .collect::<Vec<u32>>();
+            let labels = if !labels.is_empty() {
+                Some(labels)
+            } else {
+                None
+            };
+
+            let subscribe_params = SubscribeRequest {
+                scan_priv_key: *wallet.indexer().scan_sk(),
+                spend_pub_key: *wallet.indexer().spend_pk(),
+                start_height: Some(sync_point.height),
+                labels,
+            };
+
+            client.version().await?;
+            client.subscribe(&subscribe_params).await?;
+
+            while let Some(event) = client.events.next().await {
+                if let Event::Notification(notification) = event {
+                    match notification {
+                        Notification::SpSubscribe(sp_subscribe_notification) => {
+                            let histories = sp_subscribe_notification.history().clone();
+                            let progress = sp_subscribe_notification.progress();
+
+                            let mut secrets_by_height: HashMap<u32, HashMap<Txid, PublicKey>> =
+                                HashMap::new();
+
+                            tracing::debug!("Received history {:#?}", histories);
+
+                            histories.iter().for_each(|h| {
+                                secrets_by_height
+                                    .entry(h.height)
+                                    .and_modify(|v| {
+                                        v.insert(h.tx_hash, h.tweak_key);
+                                    })
+                                    .or_insert(HashMap::from([(h.tx_hash, h.tweak_key)]));
+                            });
+
+                            // Filter when the height is 0, because that would mean mempool transaction
+                            for secret in secrets_by_height.into_iter().filter(|v| v.0 > 0) {
+                                // Since frigate doesn't provide a blockchain.getblock we will mimick that here
+                                // By constructing a block from the block header and the list of transactions
+                                // received from the scan request
+                                let header = client.get_block_header(secret.0).await?.header;
+                                let mut raw_blk = consensus::serialize(&header);
+                                raw_blk.push(0);
+
+                                // Push dummy coinbase
+                                let coinbase: Transaction =
+                                    deserialize(&Vec::<u8>::from_hex(DUMMY_COINBASE).unwrap())
+                                        .unwrap();
+                                let mut block: Block = deserialize(&raw_blk).unwrap();
+
+                                let blockhash = header.block_hash();
+                                let mut txs: Vec<Transaction> = vec![coinbase];
+
+                                for key in secret.1.keys() {
+                                    let tx_result = client.get_transaction(*key).await?;
+                                    txs.push(tx_result.tx);
+                                }
+
+                                block.txdata = txs;
+                                tracing::debug!("Final block {:?}", block);
+                                wallet.apply_block_relevant(&block, secret.1, secret.0);
+
+                                let checkpoint = wallet.chain().tip().insert(BlockId {
+                                    height: secret.0,
+                                    hash: blockhash,
+                                });
+                                wallet.update_chain(checkpoint);
+                            }
+
+                            if progress >= 1.0 {
+                                tracing::info!("Scanning completed");
+                                break;
+                            }
+                        }
+                        _ => tracing::error!("Notification event not supported"),
+                    }
+                }
+            }
+            // Unsubscribe once scanning is done
+            let unsub_req = UnsubscribeRequest {
+                scan_priv_key: *wallet.indexer().scan_sk(),
+                spend_pub_key: *wallet.indexer().spend_pk(),
+            };
+            client.unsubscribe(&unsub_req).await?;
         }
         Commands::Balance => {
             fn print_balances<'a>(

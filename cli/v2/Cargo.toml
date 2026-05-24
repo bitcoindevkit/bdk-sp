@@ -21,5 +21,6 @@ rand = "0.9.0"
 indexer = { version = "0.1.0", path = "../../indexer", features = ["serde"]}
 bdk_sp_wallet = { version = "0.1.0", path = "../../wallet", features = ["serde"]}
 bdk_sp_oracles = { version = "0.1.0", path = "../../oracles" }
+electrum_streaming_client = { git = "https://github.com/sdmg15/electrum_streaming_client", branch = "master", features = ["frigate"]}
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
