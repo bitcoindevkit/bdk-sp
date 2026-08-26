@@ -181,7 +181,7 @@ impl BlindbitSubscriber {
             .unwrap_or_default();
 
         let client = self.client.clone();
-        let mut stream = futures::stream::iter(changes.writes.into_iter())
+        let mut stream = futures::stream::iter(changes.writes)
             .map(move |(height, hash)| {
                 let client = client.clone();
                 async move {

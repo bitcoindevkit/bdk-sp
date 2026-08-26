@@ -409,12 +409,7 @@ async fn main() -> anyhow::Result<()> {
                 FilterSubscriber::new(db_buffer, event_rx, changes_tx, sync_point.height);
 
             tracing::info!("Starting the node...");
-            tokio::task::spawn(async move {
-                if let Err(e) = node.run().await {
-                    return Err(e);
-                }
-                Ok(())
-            });
+            tokio::task::spawn(async move { node.run().await });
 
             tracing::info!("Starting blindbit subscriber...");
             tokio::task::spawn(async move { blindbit_subscriber.run().await });
