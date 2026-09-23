@@ -845,7 +845,7 @@ dependencies = [
 [[package]]
 name = "electrum_streaming_client"
 version = "0.4.0"
-source = "git+https://github.com/sdmg15/electrum_streaming_client?rev=f8e9178bf2f67af98364363028d909a65d741834#f8e9178bf2f67af98364363028d909a65d741834"
+source = "git+https://github.com/bitcoindevkit/electrum_streaming_client?rev=01a6d42aac33f86b2bc647e7fc702067be99c9c7#01a6d42aac33f86b2bc647e7fc702067be99c9c7"
 dependencies = [
  "bitcoin",
  "futures",

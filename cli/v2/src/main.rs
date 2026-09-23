@@ -34,7 +34,7 @@ use bdk_sp_oracles::{
         TrustedPeer, UnboundedReceiver, Warning,
     },
     filters::kyoto::{FilterEvent, FilterSubscriber},
-    frigate::{FrigateClient, StreamExt, SubscribeRequest, UnsubscribeRequest, DUMMY_COINBASE},
+    frigate::{FrigateClient, StreamExt, DUMMY_COINBASE},
     tweaks::blindbit::{BlindbitSubscriber, TweakEvent},
 };
 use bdk_sp_wallet::{
@@ -46,7 +46,7 @@ use bdk_sp_wallet::{
     ChangeSet, SpWallet,
 };
 use clap::{self, ArgGroup, Args, Parser, Subcommand};
-use electrum_streaming_client::{notification::Notification, Event};
+use electrum_streaming_client::{notification::Notification, request, Event};
 use indexer::bdk_chain::BlockId;
 use rand::RngCore;
 use serde_json::json;
@@ -224,7 +224,9 @@ pub enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let db_path = if let Ok(db_path) = env::var("DB_PATH") {
@@ -624,7 +626,7 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let subscribe_params = SubscribeRequest {
+            let subscribe_params = request::SpSubscribe {
                 scan_priv_key: *wallet.indexer().scan_sk(),
                 spend_pub_key: *wallet.indexer().spend_pk(),
                 start_height: Some(sync_point.height),
@@ -632,7 +634,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             client.version().await?;
-            client.subscribe(&subscribe_params).await?;
+            client.subscribe(subscribe_params).await?;
 
             while let Some(event) = client.events.next().await {
                 if let Event::Notification(notification) = event {
@@ -699,11 +701,11 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             // Unsubscribe once scanning is done
-            let unsub_req = UnsubscribeRequest {
+            let unsub_req = request::SpUnsubscribe {
                 scan_priv_key: *wallet.indexer().scan_sk(),
                 spend_pub_key: *wallet.indexer().spend_pk(),
             };
-            client.unsubscribe(&unsub_req).await?;
+            client.unsubscribe(unsub_req).await?;
         }
         Commands::Balance => {
             fn print_balances<'a>(

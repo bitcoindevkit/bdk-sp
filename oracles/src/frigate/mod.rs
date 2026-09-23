@@ -1,13 +1,11 @@
 use bip157::tokio;
 use bip157::tokio::net::TcpStream;
 use bip157::tokio::time::{timeout, Duration};
-use bitcoin::secp256k1::{PublicKey, SecretKey};
 use bitcoin::Txid;
 use electrum_streaming_client::response::{FullTx, HeaderResp};
 use electrum_streaming_client::{request, AsyncClient, Event};
 use futures::channel::mpsc::UnboundedReceiver;
 pub use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 
 pub const DUMMY_COINBASE: &str = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff1b03951a0604f15ccf5609013803062b9b5a0100072f425443432f20000000000000000000";
 
@@ -59,43 +57,6 @@ pub struct FrigateClient {
     pub events: UnboundedReceiver<Event>,
     pub worker: tokio::task::JoinHandle<Result<(), std::io::Error>>,
     pub request_timeout: Duration,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct History {
-    pub height: u32,
-    pub tx_hash: Txid,
-    pub tweak_key: PublicKey,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct NotifPayload {
-    scan_private_key: SecretKey,
-    spend_public_key: PublicKey,
-    address: String,
-    labels: Option<Vec<u32>>,
-    start_height: u32,
-    progress: f32,
-    history: Vec<History>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SubscribeRequest {
-    pub scan_priv_key: SecretKey,
-    pub spend_pub_key: PublicKey,
-    pub start_height: Option<u32>,
-    pub labels: Option<Vec<u32>>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct UnsubscribeRequest {
-    pub scan_priv_key: SecretKey,
-    pub spend_pub_key: PublicKey,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GetRequest {
-    pub tx_hash: Txid,
 }
 
 impl FrigateClient {
@@ -172,14 +133,10 @@ impl FrigateClient {
         Ok(res.protocol_version)
     }
 
-    pub async fn subscribe(&mut self, req: &SubscribeRequest) -> Result<String, FrigateError> {
-        let subscribe_req = request::SpSubscribe {
-            scan_priv_key: req.scan_priv_key,
-            spend_pub_key: req.spend_pub_key,
-            labels: req.labels.clone(),
-            start_height: req.start_height,
-        };
-
+    pub async fn subscribe(
+        &mut self,
+        subscribe_req: request::SpSubscribe,
+    ) -> Result<String, FrigateError> {
         tracing::debug!("Sending subscribe event request...");
         let res = timeout(
             self.request_timeout,
@@ -193,19 +150,14 @@ impl FrigateClient {
         Ok(res)
     }
 
-    pub async fn unsubscribe(&mut self, req: &UnsubscribeRequest) -> Result<(), FrigateError> {
-        let unsubscribe_req = request::SpUnsubscribe {
-            scan_priv_key: req.scan_priv_key,
-            spend_pub_key: req.spend_pub_key,
-        };
-
-        let res = timeout(
-            self.request_timeout,
-            self.client.send_request(unsubscribe_req),
-        )
-        .await
-        .map_err(|_| FrigateError::Generic("Unsubscribe request timed out".to_string()))?
-        .map_err(|e| FrigateError::Generic(e.to_string()))?;
+    pub async fn unsubscribe(
+        &mut self,
+        unsub_req: request::SpUnsubscribe,
+    ) -> Result<(), FrigateError> {
+        let res = timeout(self.request_timeout, self.client.send_request(unsub_req))
+            .await
+            .map_err(|_| FrigateError::Generic("Unsubscribe request timed out".to_string()))?
+            .map_err(|e| FrigateError::Generic(e.to_string()))?;
 
         tracing::info!("Unsubscribed to silent payment address: {:?}", res);
         Ok(())
