@@ -224,9 +224,7 @@ pub enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
-        .finish();
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let db_path = if let Ok(db_path) = env::var("DB_PATH") {
@@ -587,7 +585,7 @@ async fn main() -> anyhow::Result<()> {
             hash,
         } => {
             // The implementation done here differs from what is mentioned in the section
-            // https://github.com/sparrowwallet/frigate/tree/master?tab=readme-ov-file#blockchainsilentpaymentssubscribe
+            // https://github.com/sparrowwallet/frigate/tree/1.4.1?tab=readme-ov-file#blockchainsilentpaymentssubscribe
             // This implementation is doing a one time scanning only. So instead of calling
             // `blockchain.scripthash.subscribe` on each script from the wallet, we just subscribe
             // and read the scanning result from the stream. On each result received we update the
@@ -599,13 +597,7 @@ async fn main() -> anyhow::Result<()> {
                 let hash = wallet.chain().tip().hash();
                 HeaderCheckpoint::new(height, hash)
             } else {
-                let checkpoint = wallet
-                    .chain()
-                    .get(wallet.birthday.height)
-                    .expect("should be something");
-                let height = checkpoint.height();
-                let hash = checkpoint.hash();
-                HeaderCheckpoint::new(height, hash)
+                HeaderCheckpoint::new(wallet.birthday.height, wallet.birthday.hash)
             };
 
             let mut client = FrigateClient::connect(&rpc_args.url)
@@ -633,7 +625,10 @@ async fn main() -> anyhow::Result<()> {
                 labels,
             };
 
-            client.version().await?;
+            let version = client.version().await?;
+
+            tracing::info!("Client version: {version}");
+
             client.subscribe(subscribe_params).await?;
 
             while let Some(event) = client.events.next().await {
@@ -647,6 +642,7 @@ async fn main() -> anyhow::Result<()> {
                                 HashMap::new();
 
                             tracing::debug!("Received history {:#?}", histories);
+                            tracing::info!("Found a total of {} output(s)", histories.len());
 
                             histories.iter().for_each(|h| {
                                 secrets_by_height

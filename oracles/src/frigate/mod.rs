@@ -11,41 +11,19 @@ pub const DUMMY_COINBASE: &str = "0100000001000000000000000000000000000000000000
 
 #[derive(Debug)]
 pub enum FrigateError {
-    JsonRpc(jsonrpc::Error),
-    ParseUrl(url::ParseError),
-    Serde(serde_json::Error),
-    Generic(String),
-}
-
-impl From<serde_json::Error> for FrigateError {
-    fn from(value: serde_json::Error) -> Self {
-        FrigateError::Serde(value)
-    }
-}
-
-impl From<url::ParseError> for FrigateError {
-    fn from(value: url::ParseError) -> Self {
-        Self::ParseUrl(value)
-    }
-}
-
-impl From<jsonrpc::Error> for FrigateError {
-    fn from(value: jsonrpc::Error) -> Self {
-        Self::JsonRpc(value)
-    }
-}
-
-impl From<std::io::Error> for FrigateError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Generic(format!("Generic error {:?}", value))
-    }
+    Connection(String),
+    Timeout(String),
+    Request(String),
+    Io(String),
 }
 
 impl std::fmt::Display for FrigateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FrigateError::Generic(str) => write!(f, "{str}"),
-            _ => write!(f, "Something wrong happened"),
+            FrigateError::Connection(msg) => write!(f, "connection error: {msg}"),
+            FrigateError::Timeout(msg) => write!(f, "request timeout: {msg}"),
+            FrigateError::Request(msg) => write!(f, "request error: {msg}"),
+            FrigateError::Io(msg) => write!(f, "I/O error: {msg}"),
         }
     }
 }
@@ -61,9 +39,9 @@ pub struct FrigateClient {
 
 impl FrigateClient {
     pub async fn connect(host_url: &str) -> Result<Self, FrigateError> {
-        let stream = TcpStream::connect(host_url)
-            .await
-            .map_err(|_| FrigateError::Generic("Can't connect to socket".to_string()))?;
+        let stream = TcpStream::connect(host_url).await.map_err(|err| {
+            FrigateError::Connection(format!("can't connect to socket '{host_url}': {err}"))
+        })?;
 
         let (reader, writer) = stream.into_split();
         let (client, events, worker) = AsyncClient::new_tokio(reader, writer);
@@ -103,8 +81,8 @@ impl FrigateClient {
             self.client.send_request(request::Header { height }),
         )
         .await
-        .map_err(|_| FrigateError::Generic("Header request timed out".to_string()))?
-        .map_err(|e| FrigateError::Generic(e.to_string()))?;
+        .map_err(|_| FrigateError::Timeout("Header request timed out".to_string()))?
+        .map_err(|e| FrigateError::Request(format!("Header request failed: {e}")))?;
         Ok(res)
     }
 
@@ -114,8 +92,8 @@ impl FrigateClient {
             self.client.send_request(request::GetTx { txid }),
         )
         .await
-        .map_err(|_| FrigateError::Generic("GetTx request timed out".to_string()))?
-        .map_err(|e| FrigateError::Generic(e.to_string()))?;
+        .map_err(|_| FrigateError::Timeout("GetTx request timed out".to_string()))?
+        .map_err(|e| FrigateError::Request(format!("GetTx request failed: {e}")))?;
         Ok(res)
     }
 
@@ -124,12 +102,15 @@ impl FrigateClient {
             self.request_timeout,
             self.client.send_request(request::ServerVersion {
                 client_name: "bdk-sp".into(),
-                protocol_version: request::SupportedVersion::Range(["1.4".into(), "1.6".into()]),
+                protocol_version: request::SupportedVersion::Range([
+                    "1.3.2".into(),
+                    "1.4.1".into(),
+                ]),
             }),
         )
         .await
-        .map_err(|_| FrigateError::Generic("Version request timed out".to_string()))?
-        .map_err(|e| FrigateError::Generic(e.to_string()))?;
+        .map_err(|_| FrigateError::Timeout("Version request timed out".to_string()))?
+        .map_err(|e| FrigateError::Request(format!("Version request failed: {e}")))?;
         Ok(res.protocol_version)
     }
 
@@ -143,8 +124,8 @@ impl FrigateClient {
             self.client.send_request(subscribe_req),
         )
         .await
-        .map_err(|_| FrigateError::Generic("Subscribe request timed out".to_string()))?
-        .map_err(|e| FrigateError::Generic(e.to_string()))?;
+        .map_err(|_| FrigateError::Timeout("Subscribe request timed out".to_string()))?
+        .map_err(|e| FrigateError::Request(format!("Subscribe request failed: {e}")))?;
 
         tracing::info!("Subscribed to silent payment address: {}", res);
         Ok(res)
@@ -156,8 +137,8 @@ impl FrigateClient {
     ) -> Result<(), FrigateError> {
         let res = timeout(self.request_timeout, self.client.send_request(unsub_req))
             .await
-            .map_err(|_| FrigateError::Generic("Unsubscribe request timed out".to_string()))?
-            .map_err(|e| FrigateError::Generic(e.to_string()))?;
+            .map_err(|_| FrigateError::Timeout("Unsubscribe request timed out".to_string()))?
+            .map_err(|e| FrigateError::Request(format!("Unsubscribe request failed: {e}")))?;
 
         tracing::info!("Unsubscribed to silent payment address: {:?}", res);
         Ok(())
