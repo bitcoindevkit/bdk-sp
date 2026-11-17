@@ -54,7 +54,7 @@ impl XprivSilentPaymentSender {
         let partial_secret =
             create_silentpayment_partial_secret(&lex_min.bytes()?, &spks_with_keys)?;
 
-        Ok(create_silentpayment_scriptpubkeys(partial_secret, outputs))
+        create_silentpayment_scriptpubkeys(partial_secret, outputs)
     }
 }
 
@@ -147,7 +147,7 @@ mod tests {
             )
             .expect("should succeed");
             let expected =
-                create_silentpayment_scriptpubkeys(expected_partial_secret, &[recipient]);
+                create_silentpayment_scriptpubkeys(expected_partial_secret, &[recipient]).unwrap();
 
             assert_eq!(actual, expected);
         }

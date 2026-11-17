@@ -25,7 +25,7 @@ fn process_sending_given(
         let partial_secret =
             create_silentpayment_partial_secret(&lex_min.bytes()?, &spks_with_keys)?;
         Ok(
-            create_silentpayment_scriptpubkeys(partial_secret, recipients)
+            create_silentpayment_scriptpubkeys(partial_secret, recipients)?
                 .into_values()
                 .flatten()
                 .collect(),
