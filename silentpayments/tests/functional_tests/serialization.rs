@@ -33,7 +33,7 @@ pub struct ReceivingData {
 #[derive(Debug, Deserialize)]
 pub struct SendingDataGiven {
     pub vin: Vec<SendingVinData>,
-    #[serde(deserialize_with = "deserialize_silentpayment_code::<_, RecipientMap>")]
+    #[serde(deserialize_with = "deserialize_recipients")]
     pub recipients: Vec<SilentPaymentCode>,
 }
 
@@ -157,6 +157,28 @@ pub struct OutputWithSignature {
 #[derive(Debug, Deserialize)]
 struct RecipientMap {
     address: String,
+    /// Number of outputs to create for this recipient. Some vectors (e.g. the K_MAX one) use it to
+    /// describe many identical recipients without listing each of them.
+    #[serde(default = "default_recipient_count")]
+    count: usize,
+}
+
+fn default_recipient_count() -> usize {
+    1
+}
+
+/// Deserializes the sending recipients, repeating each one `count` times.
+fn deserialize_recipients<'de, D>(deserializer: D) -> Result<Vec<SilentPaymentCode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut recipients = Vec::new();
+    for recipient in Vec::<RecipientMap>::deserialize(deserializer)? {
+        let code =
+            SilentPaymentCode::try_from(recipient.address.as_str()).map_err(D::Error::custom)?;
+        recipients.extend(std::iter::repeat_n(code, recipient.count));
+    }
+    Ok(recipients)
 }
 
 impl AsRef<str> for RecipientMap {
