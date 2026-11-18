@@ -199,7 +199,7 @@ where
 
     let partial_secret =
         create_silentpayment_partial_secret(&lex_min_outpoint, &scripts_with_secrets)?;
-    let silent_payments = create_silentpayment_scriptpubkeys(partial_secret, recipients);
+    let silent_payments = create_silentpayment_scriptpubkeys(partial_secret, recipients)?;
 
     update_outputs(psbt, &silent_payments)?;
 
